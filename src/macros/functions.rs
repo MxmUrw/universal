@@ -274,18 +274,18 @@ macro_rules! type_and_term {
 // parses the left tokens, constructing a `match` term from them,
 // and after that calls `callback` with the term.
 // the inner terms are parsed with the `parse_inner_macro`
-macro_rules! parse_matches {
-    ({input = | $($pat:pat)* => $($expr:tt)+} $callback:ident, {args=$($args:tt)*}) => {
+// macro_rules! parse_matches {
+//     ({input = | $($pat:pat)* => $($expr:tt)+} $callback:ident, {args=$($args:tt)*}) => {
         
-    };
+//     };
 
-    // Final case (input empty)
-    ({input = } {callback = $callback:ident} {args=$($args:tt)*} $({pattern = $pattern:pat} {result = $($term:tt)+})*) => {
-        $callback_macro!{$($args)* {result = match {
-            $( $pat => $($term)+  ),*  
-        }}}
-    };
-}
+//     // Final case (input empty)
+//     ({input = } {callback = $callback:ident} {args=$($args:tt)*} $({pattern = $pattern:pat} {result = $($term:tt)+})*) => {
+//         $callback_macro!{$($args)* {result = match {
+//             $( $pat => $($term)+  ),*  
+//         }}}
+//     };
+// }
 
 // macro_rules! parse_expr {
 //     ({input = {$expr:expr} $($rest:tt)*} {callback = $callback:ident} {args = $($args:tt)*}) => {
@@ -436,20 +436,21 @@ macro_rules! run_macro_fun {
 macro_fun!
 {
     parse_expr
-    | do [($expr:expr)] [] => return[$expr]    
+    | [($expr:expr)]... => return[$expr]
+    | [$tt:tt]... => return[$tt]
 }
 
 macro_fun!
 {
     parse_matches
-    | [| $($pat:pat)* => ]... => call parse_expr [] []
-    | do [] [] => return [x]
+    | [| $($pat:pat)* => ]... => call parse_expr [] [{pat = $($pat),*}]
+    | do [] [$({pat = $($pat:pat),*} {result = $($tm:tt)+} )* ] => return [$( (($($pat),*) => ($($tm)+)) )*]
 }
 
 macro_fun!
 {
     parse_fun
-    | [$name:ident]... => call parse_fun_args [()] [$name]
+    | [$name:ident]... => call parse_fun_args [] [$name]
     | do [] [$name:ident
         {result = 
         {vars = $(($var:ident : $($var_ty:tt)+))*}
@@ -466,62 +467,65 @@ macro_fun!
 macro_fun!
 {
     parse_fun_args
-    |    [($($next_name:ident)*) ($var:ident : $($ty:tt)*)]... => continue [($($next_name)*)]    [($var : $($ty)*)]
-    |    [($($next_name:ident)*) ($($ty:tt)*)]...              => continue [($($next_name)* _0)] [($var : $($ty)*)]
-    |    [($($next_name:ident)*) :]... => call parse_fun_ty [] [{next_name=$($next_name)*}] 
+    |    [($var:ident : $($ty:tt)*)]... => continue [] [($var : $($ty)*)]
+    |    [:]... => call parse_fun_ty [] [] 
     // TODO I have to do sth in case tm_type=matches in the below line,
     // in that case I want to call `generate_math_tm` to convert `tm` into a term with the match statement
-    | do [] [$(($($var:tt)+))* {next_name=$($next_name:ident)*} {result= {tm_type= expr} {ty = $($ty:tt)+} {tm = $($tm:tt)+}}] => return
+    | do [] [$(($($var:tt)+))* {result= {tm_type= expr} {ty = $($ty:tt)+} {tm = $($tm:tt)+}}] => return
          [
             {vars = $(($($var)+))*}
             {ty = $($ty)+}
             {tm = $($tm)+}
          ]
+    | [] [$(($var_name:ident : $($var_ty:tt)+))* {result= {tm_type= matches} {ty = $($ty:tt)+} {tm =  (($($head_match_pat:pat),*) => ($($head_match_tm:tt)+)) $($tail_match:tt)*}}]
+        => call take_n [{counter = $(($head_match_pat))+} $(($var_name))*]
+                    //    [$(($var_name : $($var_ty)+))* {result= {tm_type= matches} {ty = $($ty)+} {tm =  (($($head_match_pat),*) => ($($head_match_tm)+)) $($tail_match)+}}]
+                    [$(($var_name : $($var_ty)+))* {previous= {tm_type=matches} {ty = $($ty)+} {tm =  (($($head_match_pat),*) => ($($head_match_tm)+)) $($tail_match)*}}]
+    | do [] [$(($($var:tt)+))* {previous= {tm_type= matches} {ty = $($ty:tt)+} {tm = $( (($($match_pat:pat),*) => ($($match_tm:tt)+)) )*}} {result = $(($match_var_name:ident))*}] => return 
+         [
+            {vars = $(($($var)+))*}
+            {ty = $($ty)+}
+            {tm = match ( $($match_var_name),*, )
+                {
+                    $(
+                        ($($match_pat),*,) => $($match_tm)+,
+                    )*
+                }
+            }
+         ] 
 }
 
-
+// to be called as `call take_n [{counter = COUNTER} INPUTS]` 
 macro_fun!
 {
-    generate_match_tm
-    | [($($name:ident)*)]... => call generate_anonymous_names [$($name)*] []
-    | do [{tm = $( $($pats:pat)* => {$($tm:tt)+} )*} ] [ $($names:ident)* ] => return
-    [
-        match ($($names),*)
-        {
-            $(
-                $pats => $($tm)+
-            ),*
-        }
-    ]
+    take_n
+    | [{counter = ($($head:tt)*) $($tail:tt)*} ($($input:tt)*)]... => continue [{counter = $($tail)*}] [($($input)*)]
+    | do [{counter = } $($rest:tt)*] [$($results:tt)*] => return [$($results)*]
 }
 
-macro_fun!
-{
-    generate_anonymous_name
-    | do [][] => return [gen_v0]
-    | do [_0][] => return [gen_v1]
-    | do [_0 _0][] => return [gen_v2]
-    | do [_0 _0 _0][] => return [gen_v3]
-}
-
-macro_fun!
-{
-    generate_anonymous_names
-    | []... => return [gen_v0]
-    | [_0]... => return [gen_v0 gen_v1]
-    | [_0 _0]... => return [gen_v0 gen_v1 gen_v2]
-    | [_0 _0 _0]... => return [gen_v0 gen_v1 gen_v2 gen_v3]
-}
+// macro_fun!
+// {
+//     generate_match_tm
+//     | [($($name:ident)*)]... => call generate_anonymous_names [$($name)*] []
+//     | do [{tm = $( $($pats:pat)* => {$($tm:tt)+} )*} ] [ $($names:ident)* ] => return
+//     [
+//         match ($($names),*)
+//         {
+//             $(
+//                 $pats => $($tm)+
+//             ),*
+//         }
+//     ]
+// }
 
 macro_fun!
 {
     parse_fun_ty
     | [=]... => call parse_expr {wrap_results=ty} [][{tm_type=expr}]
-    | [|]... => call parse_matches {wrap_results=ty} [][{tm_type=matches}]
+    | [|]... => call parse_matches {wrap_results=ty} [|][{tm_type=matches}]
     | [$t:tt]... => continue [][$t]
     | do [] [{ty = $($ty:tt)+} {tm_type=$tm_type:ident} {result = $($tm:tt)+}] => return[{tm_type=$tm_type} {ty = $($ty)+} {tm = $($tm)+}]
 }
-
 
 
 
@@ -532,9 +536,25 @@ mod test
     {
         assert_eq!(run_macro_fun!(parse_expr, (12u8)), 12);
         assert_eq!(hello(4), 8);
-
+        assert_eq!(hello1(None), 0);
+        assert_eq!(hello2(Some(3)), 3);
+        assert_eq!(hello3(Some(1), Some(2)), 3);
     }
 
     run_macro_fun!{parse_fun, hello (a: u8) : u8 = (a + a)}
+    run_macro_fun!{parse_fun,
+        hello1 (x: Option<u8>) : u8
+        | z => 0
+    }
+    run_macro_fun!{parse_fun,
+        hello2 (x: Option<u8>) : u8
+        | Some(a) => a
+        | None => 0
+    }
+    run_macro_fun!{parse_fun,
+        hello3 (x: Option<u8>) (y: Option<u8>) : u8
+        | Some(a) Some(b) => (a + b)
+        | _ _ => 0
+    }
 }
 
