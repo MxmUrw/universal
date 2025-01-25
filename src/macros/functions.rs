@@ -394,6 +394,23 @@ macro_rules! macro_fun_impl
         }
     };
 
+    // emitting
+    ({input = | do [$($pat:tt)*] [$($result_pat:tt)*] => do[$($conclusion:tt)*] $($rest:tt)*} {name=$name:ident} {cases = $($cases:tt)*} ) =>
+    {
+        macro_fun_impl!
+        {
+            {input = $($rest)*}
+            {name = $name}
+            {cases = $($cases)* {  
+                ({input = $($pat)* $$($$rest:tt)*} {callback = $$callback:ident} {args = $$($$args:tt)*} $($result_pat)*) =>
+                {
+                    $($conclusion)*
+                }
+            }}
+        }
+    };
+
+
     ({input = } {name=$name:ident} {cases = $({ $($case:tt)+ })*}) =>
     {
         macro_rules! $name
@@ -449,16 +466,16 @@ macro_fun!
 
 macro_fun!
 {
-    parse_fun
+    parse_fun_and_emit
     | [$name:ident]... => call parse_fun_args [] [$name]
     | do [] [$name:ident
         {result = 
         {vars = $(($var:ident : $($var_ty:tt)+))*}
         {ty = $($ty:tt)+}
         {tm = $($tm:tt)+}
-    }] => return
+    }] => do
     [
-        pub fn $name($($var : $($var_ty)+),*) -> $($ty)+ {
+        pub fn $name($($var : eval_type!{$($var_ty)+}),*) -> $($ty)+ {
             $($tm)+
         }
     ]
@@ -467,7 +484,8 @@ macro_fun!
 macro_fun!
 {
     parse_fun_args
-    |    [($var:ident : $($ty:tt)*)]... => continue [] [($var : $($ty)*)]
+    |    [($var:ident $($var_tail:ident)* : $($ty:tt)*)]... => continue [($($var_tail)* : $($ty)*)] [($var : $($ty)*)]
+    |    [(: $($ty:tt)*)]... => continue [] []
     |    [:]... => call parse_fun_ty [] [] 
     // TODO I have to do sth in case tm_type=matches in the below line,
     // in that case I want to call `generate_math_tm` to convert `tm` into a term with the match statement
@@ -527,6 +545,13 @@ macro_fun!
     | do [] [{ty = $($ty:tt)+} {tm_type=$tm_type:ident} {result = $($tm:tt)+}] => return[{tm_type=$tm_type} {ty = $($ty)+} {tm = $($tm)+}]
 }
 
+macro_rules! define {
+    ($([$($function:tt)+])*) => {
+        $(
+            run_macro_fun!{parse_fun_and_emit, $($function)+}
+        )*
+    };
+}
 
 
 mod test
@@ -541,20 +566,45 @@ mod test
         assert_eq!(hello3(Some(1), Some(2)), 3);
     }
 
-    run_macro_fun!{parse_fun, hello (a: u8) : u8 = (a + a)}
-    run_macro_fun!{parse_fun,
-        hello1 (x: Option<u8>) : u8
+    define!
+    {
+        [ hello (a: u8) : u8 = (a + a)
+        ]
+
+        [ hello1 (x: Option u8) : u8
         | z => 0
-    }
-    run_macro_fun!{parse_fun,
-        hello2 (x: Option<u8>) : u8
+        ]
+
+        [ hello2 (x: Option u8) : u8
         | Some(a) => a
         | None => 0
-    }
-    run_macro_fun!{parse_fun,
-        hello3 (x: Option<u8>) (y: Option<u8>) : u8
+        ]
+
+        [ hello3 (x: Option u8) (y: Option u8) : u8
         | Some(a) Some(b) => (a + b)
         | _ _ => 0
+        ]
+
+        [ hello4 (x y: Option u8) : u8
+        | Some(a) Some(b) => (a + b)
+        | _ _ => 0
+        ]
     }
+
+    // run_macro_fun!{parse_fun_and_emit, hello (a: u8) : u8 = (a + a) }
+    // run_macro_fun!{parse_fun_and_emit,
+    //     hello1 (x: Option u8) : u8
+    //     | z => 0
+    // }
+    // run_macro_fun!{parse_fun_and_emit,
+    //     hello2 (x: Option u8) : u8
+    //     | Some(a) => a
+    //     | None => 0
+    // }
+    // run_macro_fun!{parse_fun_and_emit,
+    //     hello3 (x: Option u8) (y: Option u8) : u8
+    //     | Some(a) Some(b) => (a + b)
+    //     | _ _ => 0
+    // }
 }
 
